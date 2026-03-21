@@ -2,7 +2,7 @@
 
 Q_LOGGING_CATEGORY(deepseekPluginLog, "kate.deepseek", QtDebugMsg)
 
-K_PLUGIN_FACTORY_WITH_JSON(DeepSeekAssistantPluginFactory, "plugin.json", registerPlugin<DeepSeekAssistantPlugin>();)
+K_PLUGIN_FACTORY_WITH_JSON(DeepSeekAssistantPluginFactory, "src/kdeepseek.json", registerPlugin<DeepSeekAssistantPlugin>();)
 
 QObject *DeepSeekAssistantPlugin::createView(KTextEditor::MainWindow *mainWindow)
 {

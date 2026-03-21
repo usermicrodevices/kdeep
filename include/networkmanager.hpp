@@ -1,9 +1,13 @@
 #pragma once
 
 #include <QObject>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QUrl>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
-#include <QJsonObject>
+#include <QNetworkRequest>
 
 class NetworkManager : public QObject
 {

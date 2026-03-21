@@ -2,7 +2,7 @@
 
 DeepSeekConfigPage::DeepSeekConfigPage(QWidget *parent)
     : KTextEditor::ConfigPage(parent)
-    , m_config(nullptr)   // initialize to nullptr
+    , m_config(nullptr)
 {
     QFormLayout *layout = new QFormLayout(this);
 

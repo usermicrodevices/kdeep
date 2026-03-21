@@ -1,9 +1,3 @@
-#include <QJsonDocument>
-#include <QJsonArray>
-#include <QJsonObject>
-#include <QUrl>
-#include <QNetworkRequest>
-
 #include "networkmanager.hpp"
 
 NetworkManager::NetworkManager(QObject *parent)

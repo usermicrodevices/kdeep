@@ -26,6 +26,7 @@ kcoreaddons_add_plugin(kdeepseek
 
 # Force build outputs to stay in the build directory
 set_target_properties(kdeepseek PROPERTIES
+    KPLUGIN_JSON "${CMAKE_CURRENT_SOURCE_DIR}/src/kdeepseek.json"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
@@ -39,6 +40,9 @@ target_sources(kdeepseek
     src/plugin.cpp
     src/networkmanager.cpp
     src/deepseekconfigpage.cpp
+    include/deepseekconfigpage.hpp
+    include/networkmanager.hpp
+    include/plugin.hpp
 )
 
 target_compile_definitions(kdeepseek PRIVATE TRANSLATION_DOMAIN="kdeepseek")
