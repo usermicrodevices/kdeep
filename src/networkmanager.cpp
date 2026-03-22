@@ -8,22 +8,25 @@ NetworkManager::NetworkManager(QObject *parent)
             this, &NetworkManager::onReplyFinished);
 }
 
-void NetworkManager::sendRequest(const QString &baseUrl, const QString &apiKey, const QString &prompt, const QString &code,
-                                 const QString &model, double temperature, int maxTokens)
+void NetworkManager::sendRequest(const QString &baseUrl, const QString &apiKey,
+                                 const QString &prompt, const QString &code,
+                                 const QString &model, double temperature, int maxTokens,
+                                 bool skipAuth)
 {
     QUrl url;
     QString path = "/chat/completions";
-    if (baseUrl.endsWith('/')) { // remove leading slash from path
+    if (baseUrl.endsWith('/')) {
         url = QUrl(baseUrl + path.mid(1));
     } else {
         url = QUrl(baseUrl + path);
     }
-    //QUrl url("https://api.deepseek.com/v1/chat/completions");
-    //QUrl url("https://api.deepseek.com/chat/completions");
-    QNetworkRequest request(url);
 
+    QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    request.setRawHeader("Authorization", QString("Bearer %1").arg(apiKey).toUtf8());
+
+    if (!skipAuth && !apiKey.isEmpty()) {
+        request.setRawHeader("Authorization", QString("Bearer %1").arg(apiKey).toUtf8());
+    }
 
     QJsonObject userMessage;
     userMessage["role"] = "user";
@@ -46,25 +49,23 @@ void NetworkManager::sendRequest(const QString &baseUrl, const QString &apiKey, 
 
 void NetworkManager::onReplyFinished(QNetworkReply *reply)
 {
-    // Get HTTP status code (will be 0 for non-HTTP errors)
+    // (unchanged from original – error handling remains the same)
     int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     QByteArray responseData = reply->readAll();
 
-    // True network errors: no HTTP status code and a transport error
     if (httpCode == 0 && reply->error() != QNetworkReply::NoError) {
         emit requestFinished(QString("Network error: %1").arg(reply->errorString()));
         reply->deleteLater();
         return;
     }
 
-    // HTTP error (4xx, 5xx)
-    if (httpCode < 200 || httpCode >= 300) { // Try to parse the error JSON returned by the API
+    if (httpCode < 200 || httpCode >= 300) {
         QJsonDocument jsonResponse = QJsonDocument::fromJson(responseData);
         if (jsonResponse.isObject() && jsonResponse.object().contains("error")) {
             QJsonObject errorObj = jsonResponse.object()["error"].toObject();
             QString errorMsg = errorObj["message"].toString("Unknown API error");
             emit requestFinished(QString("API error (HTTP %1): %2").arg(httpCode).arg(errorMsg));
-        } else { // Fallback: just show the raw response
+        } else {
             emit requestFinished(QString("HTTP error %1: %2").arg(httpCode).arg(QString(responseData)));
         }
         reply->deleteLater();

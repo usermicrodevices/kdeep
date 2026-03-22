@@ -47,7 +47,7 @@ DeepSeekAssistantPluginView::DeepSeekAssistantPluginView(DeepSeekAssistantPlugin
     m_toolview->layout()->addWidget(m_previewer);
     qCDebug(deepseekPluginLog) << "Previewer created and added";
 
-    m_askAIButton = new QPushButton(i18n("Ask DeepSeek"), m_toolview.get());
+    m_askAIButton = new QPushButton(i18n("Ask AI"), m_toolview.get());
     m_toolview->layout()->addWidget(m_askAIButton);
     qCDebug(deepseekPluginLog) << "Button created";
 
@@ -75,7 +75,6 @@ DeepSeekAssistantPluginView::~DeepSeekAssistantPluginView()
 void DeepSeekAssistantPluginView::onViewChanged(KTextEditor::View *v)
 {
     Q_UNUSED(v);
-    // If you want to keep the Markdown preview, uncomment the original code.
 }
 
 void DeepSeekAssistantPluginView::onAskAIClicked()
@@ -88,12 +87,18 @@ void DeepSeekAssistantPluginView::onAskAIClicked()
         return;
     }
 
-    // Load settings from KConfig (the config page writes to this file)
+    // Load settings from KConfig
     KSharedConfigPtr config = KSharedConfig::openConfig("kdeepseekrc");
     KConfigGroup group(config, "General");
     QString baseUrl = group.readEntry("baseUrl", "https://api.deepseek.com");
-    QString apiKey = group.readEntry("apiKey", QString());
-    if (apiKey.isEmpty()) {
+    bool useGpt4all = group.readEntry("useGpt4all", false);
+    QString apiKey = "";
+    if (!useGpt4all) {
+        apiKey = group.readEntry("apiKey", QString());
+    }
+
+    // Validate API key only if not using GPT4All
+    if (!useGpt4all && apiKey.isEmpty()) {
         m_previewer->setPlainText(i18n("API key not set. Please configure it in Kate's settings (Settings → Configure Kate → Plugins → DeepSeek)."));
         return;
     }
@@ -109,9 +114,9 @@ void DeepSeekAssistantPluginView::onAskAIClicked()
     // Disable button and show waiting message
     m_askAIButton->setEnabled(false);
     m_askAIButton->setText(i18n("Asking..."));
-    m_previewer->setPlainText(i18n("Asking DeepSeek, please wait..."));
+    m_previewer->setPlainText(i18n("Asking AI, please wait..."));
 
-    m_networkManager->sendRequest(baseUrl, apiKey, prompt, code, model, temperature, maxTokens);
+    m_networkManager->sendRequest(baseUrl, apiKey, prompt, code, model, temperature, maxTokens, useGpt4all);
 }
 
 void DeepSeekAssistantPluginView::handleAIResponse(const QString &response)
@@ -119,7 +124,7 @@ void DeepSeekAssistantPluginView::handleAIResponse(const QString &response)
     qCDebug(deepseekPluginLog) << "handleAIResponse called, response length:" << response.length();
     m_previewer->setMarkdown(response);
     m_askAIButton->setEnabled(true);
-    m_askAIButton->setText(i18n("Ask DeepSeek"));
+    m_askAIButton->setText(i18n("Ask AI"));
 }
 
 #include "plugin.moc"
