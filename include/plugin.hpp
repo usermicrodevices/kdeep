@@ -36,7 +36,6 @@ public:
 
     QObject *createView(KTextEditor::MainWindow *mainWindow) override;
 
-    // New overrides for KF6
     int configPages() const override;
     KTextEditor::ConfigPage* configPage(int number, QWidget* parent) override;
 };
