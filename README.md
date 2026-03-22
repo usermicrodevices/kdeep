@@ -1,6 +1,6 @@
 # kdeep 🪐
 ["DeepSeek"](https://deepseek.com/) assistent🧙 plugin for
-["["Kate"](https://github.com/KDE/kate) editor.
+["Kate"](https://github.com/KDE/kate) editor.
 Now it is simple plugin becouse global service
 has't free API and author nas't full test it.
 Any case you already must be have charged account
