@@ -1,6 +1,9 @@
 build_kf6/
 thirdparty/
 
+# Models
+*.gguf
+
 # Prerequisites
 *.d
 
