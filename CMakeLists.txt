@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(kdeepseek VERSION 1.0)
+project(kdeep VERSION 1.0)
 
 find_package(ECM REQUIRED NO_MODULE)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
@@ -20,35 +20,68 @@ find_package(KF6 ${KF6_DEP_VERSION} REQUIRED COMPONENTS
 )
 
 # Define the plugin
-kcoreaddons_add_plugin(kdeepseek
+kcoreaddons_add_plugin(kdeep
     INSTALL_NAMESPACE "kf6/ktexteditor"
 )
 
 # Force build outputs to stay in the build directory
-set_target_properties(kdeepseek PROPERTIES
-    KPLUGIN_JSON "${CMAKE_CURRENT_SOURCE_DIR}/src/kdeepseek.json"
+set_target_properties(kdeep PROPERTIES
+    KPLUGIN_JSON "${CMAKE_CURRENT_SOURCE_DIR}/src/kdeep.json"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 
-include_directories(
-    include
+# Build PicoLLM as a static library
+add_library(picolm STATIC
+    thirdparty/picolm/picolm/model.c
+    thirdparty/picolm/picolm/tensor.c
+    thirdparty/picolm/picolm/quant.c
+    thirdparty/picolm/picolm/tokenizer.c
+    thirdparty/picolm/picolm/sampler.c
+    thirdparty/picolm/picolm/grammar.c
 )
 
-target_sources(kdeepseek
+# Make PicoLLM headers public so they are available to the plugin
+target_include_directories(picolm PUBLIC thirdparty/picolm/picolm)
+
+# Set C11 standard, -fPIC, and optimization flags for C files
+target_compile_options(picolm PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:-std=c11>
+    $<$<COMPILE_LANGUAGE:C>:-fPIC>
+    -O2
+    -pthread
+)
+
+# Define _GNU_SOURCE for C files to enable madvise and related functions
+target_compile_definitions(picolm PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:_GNU_SOURCE>
+)
+
+# Link libraries needed by the C code
+target_link_libraries(picolm PRIVATE m pthread)
+
+# Include directories for the plugin
+include_directories(
+    include
+    thirdparty/picolm/picolm
+)
+
+target_sources(kdeep
     PRIVATE
     src/plugin.cpp
     src/networkmanager.cpp
-    src/deepseekconfigpage.cpp
-    include/deepseekconfigpage.hpp
+    src/kdeepconfig.cpp
+    include/kdeepconfig.hpp
     include/networkmanager.hpp
     include/plugin.hpp
 )
 
-target_compile_definitions(kdeepseek PRIVATE TRANSLATION_DOMAIN="kdeepseek")
+target_compile_definitions(kdeep PRIVATE TRANSLATION_DOMAIN="kdeep")
 
-target_link_libraries(kdeepseek
+# Link the plugin – note PRIVATE must come first
+target_link_libraries(kdeep
     PRIVATE
+    picolm
     KF6::CoreAddons
     KF6::I18n
     KF6::TextEditor
@@ -57,5 +90,5 @@ target_link_libraries(kdeepseek
     Qt6::Network
 )
 
-# Install the plugin (this step is handled manually by your build script)
-install(TARGETS kdeepseek DESTINATION ${KDE_INSTALL_PLUGINDIR})
+# Install the plugin (handled manually by build.sh)
+install(TARGETS kdeep DESTINATION ${KDE_INSTALL_PLUGINDIR})

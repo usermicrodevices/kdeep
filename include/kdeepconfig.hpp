@@ -1,5 +1,6 @@
 #pragma once
 #include <QFormLayout>
+#include <QFileDialog>
 #include <QLineEdit>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -29,12 +30,12 @@ class QDoubleSpinBox;
 class QSpinBox;
 class KConfigGroup;
 
-class DeepSeekConfigPage : public KTextEditor::ConfigPage
+class DeepConfig : public KTextEditor::ConfigPage
 {
     Q_OBJECT
 public:
-    explicit DeepSeekConfigPage(QWidget *parent = nullptr);
-    ~DeepSeekConfigPage() override;
+    explicit DeepConfig(QWidget *parent = nullptr);
+    ~DeepConfig() override;
 
     QString name() const override;
     QString fullName() const override;
@@ -55,8 +56,16 @@ private:
     QDoubleSpinBox *m_temperatureSpin;
     QSpinBox *m_maxTokensSpin;
     QCheckBox *m_useGpt4allCheck;
+    QPushButton *m_refreshModelsBtn;
     KConfigGroup *m_config;
+    QCheckBox   *m_usePicolmCheck;
+    QLineEdit   *m_picolmModelPathEdit;
+    QPushButton *m_picolmModelBrowseButton;
+    QSpinBox *m_threadsSpin;
+    QSpinBox *m_seedSpin;
 
 private slots:
     void refreshModels();
+    void browsePicolmModel();
+
 };
