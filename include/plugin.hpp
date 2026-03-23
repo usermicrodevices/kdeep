@@ -18,11 +18,13 @@
 #include <KTextEditor/View>
 
 // includes from thirdparty/picolm/picolm
+extern "C" {
 #include "model.h"
 #include "tensor.h"
 #include "tokenizer.h"
 #include "sampler.h"
 #include "grammar.h"
+}
 
 #include "kdeepconfig.hpp"
 #include "networkmanager.hpp"

@@ -44,9 +44,10 @@ add_library(picolm STATIC
 # Make PicoLLM headers public so they are available to the plugin
 target_include_directories(picolm PUBLIC thirdparty/picolm/picolm)
 
-# Set C11 standard only for C files
+# Set C11 standard, -fPIC, and optimization flags for C files
 target_compile_options(picolm PRIVATE
     $<$<COMPILE_LANGUAGE:C>:-std=c11>
+    $<$<COMPILE_LANGUAGE:C>:-fPIC>
     -O2
     -pthread
 )
@@ -59,9 +60,7 @@ target_compile_definitions(picolm PRIVATE
 # Link libraries needed by the C code
 target_link_libraries(picolm PRIVATE m pthread)
 
-# Include directories for the plugin – explicitly add the PicoLLM header path
-# because it's needed for the plugin's own includes (even though it's public,
-# we add it here for safety)
+# Include directories for the plugin
 include_directories(
     include
     thirdparty/picolm/picolm
