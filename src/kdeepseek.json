@@ -1,7 +1,0 @@
-{
-    "KPlugin": {
-        "Id": "kdeepseek",
-        "Description": "AI-powered code assistance using DeepSeek",
-        "Name": "DeepSeek Assistant"
-    }
-}
