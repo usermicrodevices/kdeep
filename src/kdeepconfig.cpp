@@ -221,9 +221,14 @@ void DeepConfig::saveSettings()
 void DeepConfig::browsePicolmModel()
 {
     QString file = QFileDialog::getOpenFileName(this, i18n("Select PicoLLM model file"),
-                                                QString(), i18n("GGUF files (*.gguf)"));
-    if (!file.isEmpty())
+                                                QDir::homePath(), i18n("GGUF files (*.gguf)"));
+    if (!file.isEmpty()) {
+        // Convert to relative home path if under home
+        if (file.startsWith(QDir::homePath())) {
+            file = "~" + file.mid(QDir::homePath().length());
+        }
         m_picolmModelPathEdit->setText(file);
+    }
 }
 
 void DeepConfig::refreshModels()

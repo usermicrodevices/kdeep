@@ -44,12 +44,73 @@ void PicoLLMWorker::setParams(const QString &modelPath,
     m_threads = threads;
 }
 
-void PicoLLMWorker::run()
-{
+static thread_local sigjmp_buf crash_env;
+
+void signal_handler(int sig) {
+    if (sig == SIGFPE) {
+        longjmp(crash_env, 1);
+    }
+}
+
+static QMutex libraryMutex;
+
+void PicoLLMWorker::run() {
+    struct sigaction sa;
+    sa.sa_handler = signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_NODEFER; // Crucial: Allow the signal to trigger again
+    sigaction(SIGFPE, &sa, NULL);
+
+    QMutexLocker locker(&libraryMutex);
+
+    // Expand ~ to home directory
+    QString expandedPath = m_modelPath;
+    if (expandedPath.startsWith('~')) {
+        expandedPath = QDir::homePath() + expandedPath.mid(1);
+    }
+    expandedPath = QFileInfo(expandedPath).absoluteFilePath();
+
+    // Check if file exists
+    if (!QFileInfo::exists(expandedPath)) {
+        emit error(QLatin1String("Model file not found: ") + expandedPath);
+        signal(SIGFPE, SIG_DFL);
+        return;
+    }
+
+    if (setjmp(crash_env) == 0) {
     // Load model
     model_t model;
-    if (model_load(&model, m_modelPath.toUtf8().constData(), 0) != 0) {
-        emit error(QLatin1String("Failed to load model"));
+    try {
+        if (model_load(&model, expandedPath.toUtf8().constData(), 0) != 0) {
+            emit error(QLatin1String("Failed to load model from: ") + expandedPath);
+            signal(SIGFPE, SIG_DFL);
+            return;
+        }
+    } catch (const std::exception& err) {
+        qCDebug(deepPluginLog) << "C++ exception on model_load: " << err.what();
+        emit error(QLatin1String("C++ exception on model_load: ") + QLatin1String(err.what()));
+        signal(SIGFPE, SIG_DFL);
+        return;
+    } catch (...) {
+        qCDebug(deepPluginLog) << "Unknown exception on model_load";
+        emit error(QLatin1String("Unknown exception on model_load"));
+        signal(SIGFPE, SIG_DFL);
+        return;
+    }
+
+    try{
+
+    // Validate model configuration
+    if (model.config.vocab_size <= 0) {
+        model_free(&model);
+        emit error(QLatin1String("Model has invalid vocabulary size"));
+        signal(SIGFPE, SIG_DFL);
+        return;
+    }
+    if (model.config.max_seq_len <= 0) {
+        model_free(&model);
+        emit error(QLatin1String("Model has invalid max sequence length"));
+        signal(SIGFPE, SIG_DFL);
         return;
     }
 
@@ -60,6 +121,31 @@ void PicoLLMWorker::run()
     if (tokenizer_load(&tokenizer, &model) != 0) {
         model_free(&model);
         emit error(QLatin1String("Failed to load tokenizer"));
+        signal(SIGFPE, SIG_DFL);
+        return;
+    }
+
+    // Check for empty prompt
+    QByteArray promptBytes = m_prompt.toUtf8();
+    if (promptBytes.isEmpty()) {
+        tokenizer_free(&tokenizer);
+        model_free(&model);
+        emit error(QLatin1String("Empty prompt"));
+        signal(SIGFPE, SIG_DFL);
+        return;
+    }
+
+    // Encode prompt
+    int maxPromptTokens = promptBytes.size() + 3;
+    int *promptTokens = (int*)malloc(maxPromptTokens * sizeof(int));
+    int nPrompt = tokenizer_encode(&tokenizer, promptBytes.constData(),
+                                   promptTokens, maxPromptTokens, 1);
+    if (nPrompt <= 0) {
+        free(promptTokens);
+        tokenizer_free(&tokenizer);
+        model_free(&model);
+        emit error(QLatin1String("Failed to encode prompt"));
+        signal(SIGFPE, SIG_DFL);
         return;
     }
 
@@ -70,13 +156,6 @@ void PicoLLMWorker::run()
     // Init grammar (disabled for now)
     grammar_state_t grammar;
     grammar_init(&grammar, GRAMMAR_NONE, &tokenizer);
-
-    // Encode prompt
-    QByteArray promptBytes = m_prompt.toUtf8();
-    int maxPromptTokens = promptBytes.size() + 3;
-    int *promptTokens = (int*)malloc(maxPromptTokens * sizeof(int));
-    int nPrompt = tokenizer_encode(&tokenizer, promptBytes.constData(),
-                                   promptTokens, maxPromptTokens, 1);
 
     // Generation buffer
     size_t outCap = 256;
@@ -129,6 +208,26 @@ void PicoLLMWorker::run()
     QString result = QString::fromUtf8(outStr);
     free(outStr);
     emit finished(result);
+
+
+    } catch (const std::bad_alloc& e) {
+        // Specifically catch out-of-memory errors (common with LLMs)
+        emit error(QString("Critical: Out of Memory during inference: %1").arg(e.what()));
+    } catch (const std::exception& e) {
+        // Catch all other standard C++ exceptions
+        emit error(QString("Worker Exception: %1").arg(e.what()));
+    } catch (...) {
+        // Absolute fallback for unknown/non-standard errors
+        emit error("An unknown fatal error occurred in the LLM thread.");
+    }
+    } else {
+        // --- RECOVERED FROM CRASH ---
+        // The CPU jumped here after the "divide error"
+        emit error("KDeep Internal Crash: Invalid model math (Divide by Zero in .so)");
+    }
+
+    // Cleanup handler
+    signal(SIGFPE, SIG_DFL);
 }
 
 // ------------------------------------------------------------
@@ -180,7 +279,7 @@ DeepAssistantPluginView::DeepAssistantPluginView(DeepAssistantPlugin *plugin, KT
     connect(m_picolmThread, &QThread::finished, m_picolmWorker, &QObject::deleteLater);
     connect(m_picolmWorker, &PicoLLMWorker::finished, this, &DeepAssistantPluginView::handleAIResponse);
     connect(m_picolmWorker, &PicoLLMWorker::error, this, &DeepAssistantPluginView::handlePicolmError);
-    m_picolmThread->start();
+    m_picolmThread->start(QThread::LowPriority);
 
     qCDebug(deepPluginLog) << "Plugin view constructor finished";
 }
