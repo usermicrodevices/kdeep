@@ -1,6 +1,14 @@
 #pragma once
 
+#include <csignal>
+#include <setjmp.h>
+
 #include <memory>
+#include <exception>
+#include <stdexcept>
+
+#include <QDir>
+#include <QFileInfo>
 #include <QThread>
 #include <QMutex>
 #include <QTextBrowser>
