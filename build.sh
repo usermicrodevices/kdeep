@@ -1,11 +1,10 @@
 #!/bin/bash
 set -e
 
-echo "=== Kate AI Plugin Build for KF6/Flatpak & Native (Ubuntu 25.10) ==="
+THIRDPARTY_DIR="thirdparty"
 
-# ----------------------------------------------------------------------
-# Check and install required build dependencies
-# ----------------------------------------------------------------------
+echo "=== Kate AI Plugin Build for KF6/Flatpak & Native Linux OS ==="
+
 echo "Checking build dependencies..."
 
 REQUIRED_PACKAGES=(
@@ -41,31 +40,39 @@ else
     echo "All required packages are installed."
 fi
 
-# ----------------------------------------------------------------------
-# Ensure PicoLLM source is available
-# ----------------------------------------------------------------------
 if ! command -v git &>/dev/null; then
     echo "Error: git is required to fetch PicoLLM source." >&2
     exit 1
 fi
 
-PICOLM_DIR="thirdparty/picolm/picolm"
+
+PICOLM_DIR="$THIRDPARTY_DIR/picolm"
 if [ ! -d "$PICOLM_DIR" ]; then
     echo "Cloning PicoLLM repository..."
     git clone git@github.com:RightNow-AI/picolm.git "$PICOLM_DIR"
 else
-    echo "PicoLLM repository already exists. Updating..."
-    (cd "$PICOLM_DIR" && git pull)
+    echo "PicoLLM repository already exists."
+    read -p "Updating $PICOLM_DIR from Github...? (y/N) " reply
+    echo
+    if [[ $reply =~ ^[Yy]$ ]] || [[ -z $reply ]]; then
+        (cd "$PICOLM_DIR" && git pull)
+    fi
 fi
 
-# Verify the required source files are present
 REQUIRED_FILES=(
-    "model.c"
-    "tensor.c"
-    "quant.c"
-    "tokenizer.c"
-    "sampler.c"
-    "grammar.c"
+    "picolm/picolm.c"
+    "picolm/model.h"
+    "picolm/model.c"
+    "picolm/tensor.h"
+    "picolm/tensor.c"
+    "picolm/quant.h"
+    "picolm/quant.c"
+    "picolm/tokenizer.h"
+    "picolm/tokenizer.c"
+    "picolm/sampler.h"
+    "picolm/sampler.c"
+    "picolm/grammar.h"
+    "picolm/grammar.c"
 )
 for f in "${REQUIRED_FILES[@]}"; do
     if [ ! -f "$PICOLM_DIR/$f" ]; then
@@ -74,14 +81,8 @@ for f in "${REQUIRED_FILES[@]}"; do
     fi
 done
 
-# ----------------------------------------------------------------------
-# Build the plugin
-# ----------------------------------------------------------------------
 BUILD_DIR="build_kf6"
 
-# If libpicolm.a already exists and the source hasn't changed, we could skip.
-# But CMake handles this automatically. We'll still remove the build dir only if
-# we need a clean build. For incremental builds, we'll keep the directory.
 if [ -d "$BUILD_DIR" ]; then
     echo "Build directory already exists. Do you want to clean it? (y/N)"
     read -p "Clean and rebuild? " clean_reply
@@ -99,16 +100,12 @@ cmake -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DQT_MAJOR_VERSION=6
 echo "Building plugin..."
 cmake --build "$BUILD_DIR"
 
-# Locate the built plugin
 PLUGIN_FILE=$(find "$BUILD_DIR" -name "kdeep.so" -type f | head -n1)
 if [ -z "$PLUGIN_FILE" ]; then
     echo "Error: Build failed – plugin not found." >&2
     exit 1
 fi
 
-# ----------------------------------------------------------------------
-# Native (system) installation
-# ----------------------------------------------------------------------
 check_native_kate() {
     dpkg -l kate 2>/dev/null | grep -q "^ii"
 }
@@ -140,9 +137,6 @@ else
     echo "Native Kate not detected. Skipping system installation."
 fi
 
-# ----------------------------------------------------------------------
-# Flatpak installation (optional)
-# ----------------------------------------------------------------------
 if command -v flatpak &>/dev/null && flatpak list 2>/dev/null | grep -q org.kde.kate; then
     echo "Flatpak Kate detected."
     read -p "Install plugin for Flatpak Kate? (Y/n) " reply
@@ -156,7 +150,6 @@ if command -v flatpak &>/dev/null && flatpak list 2>/dev/null | grep -q org.kde.
             echo "USED FLATPAK PATH: $FLATPAK_PATH"
         fi
 
-        # Check if Flatpak Kate uses KF6 runtime
         RUNTIME=$(flatpak info --show-runtime org.kde.kate)
         echo "Detected runtime: $RUNTIME"
         if [[ "$RUNTIME" =~ org\.kde\.Platform.*6 ]]; then
@@ -171,7 +164,6 @@ if command -v flatpak &>/dev/null && flatpak list 2>/dev/null | grep -q org.kde.
             fi
         fi
 
-        # Determine if the flatpak is system-wide or user
         if [[ "$FLATPAK_PATH" == /var/lib/flatpak/* ]]; then
             USE_SUDO=1
         else
@@ -201,16 +193,12 @@ if command -v flatpak &>/dev/null && flatpak list 2>/dev/null | grep -q org.kde.
             exit 1
         fi
 
-        # Ensure Kate has network access (for GPT4All/DeepSeek API)
         flatpak override --user --share=network org.kde.kate
     fi
 else
     echo "Flatpak Kate not found. Skipping Flatpak installation."
 fi
 
-# ----------------------------------------------------------------------
-# Done
-# ----------------------------------------------------------------------
 echo "Done."
 echo
 echo "IMPORTANT: After installation, you must enable the plugin in Kate:"
