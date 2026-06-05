@@ -24,11 +24,14 @@
 
 #include <KTextEditor/ConfigPage>
 
+#include "opencodemanager.hpp"
+
 class QLineEdit;
 class QComboBox;
 class QDoubleSpinBox;
 class QSpinBox;
 class KConfigGroup;
+class OpenCodeManager;
 
 class DeepConfig : public KTextEditor::ConfigPage
 {
@@ -64,8 +67,19 @@ private:
     QSpinBox *m_threadsSpin;
     QSpinBox *m_seedSpin;
 
+    QCheckBox   *m_useOpenCodeCheck;
+    QLineEdit   *m_openCodeUrlEdit;
+    QLineEdit   *m_openCodeUserEdit;
+    QLineEdit   *m_openCodePassEdit;
+    QComboBox   *m_openCodeModelCombo;
+    QComboBox   *m_openCodeAgentCombo;
+    QComboBox   *m_openCodeEffortCombo;
+    QPushButton *m_refreshOpenCodeBtn;
+    OpenCodeManager *m_openCodeManager;
+
 private slots:
     void refreshModels();
     void browsePicolmModel();
+    void refreshOpenCodeProviders();
 
 };

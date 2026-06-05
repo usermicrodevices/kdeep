@@ -20,7 +20,14 @@ curl -L -o tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
 https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
 ```
 
+## ... 🧙‍♂️ no comments, you must be try it now 🦸🏻‍♀️ ...
+[OpenCode](https://opencode.ai/)
+[OpenCode github](https://github.com/anomalyco/opencode)
+
 ## ... 🤯 wow, it can work 👀 ...
 ### build and install - all-in-one
 use ```./build.sh``` for Ubuntu 25.10 and later,
 support only KF6 (native and Flatpak) versions
+
+### screenshot
+![image](./kdeep.png "screenshot")

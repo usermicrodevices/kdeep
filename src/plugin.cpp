@@ -2,6 +2,8 @@
 
 Q_LOGGING_CATEGORY(deepPluginLog, "kate.deep", QtDebugMsg)
 
+std::atomic<bool> PicoLLMWorker::s_sigfpeCaught{false};
+
 K_PLUGIN_FACTORY_WITH_JSON(DeepAssistantPluginFactory, "src/kdeep.json", registerPlugin<DeepAssistantPlugin>();)
 
 QObject *DeepAssistantPlugin::createView(KTextEditor::MainWindow *mainWindow)
@@ -44,22 +46,29 @@ void PicoLLMWorker::setParams(const QString &modelPath,
     m_threads = threads;
 }
 
-static thread_local sigjmp_buf crash_env;
-
-void signal_handler(int sig) {
-    if (sig == SIGFPE) {
-        longjmp(crash_env, 1);
-    }
+static void sigfpe_signal_handler(int sig) {
+    Q_UNUSED(sig);
+    PicoLLMWorker::s_sigfpeCaught.store(true, std::memory_order_release);
 }
 
 static QMutex libraryMutex;
 
 void PicoLLMWorker::run() {
+    // Setup alternate signal stack for safe SIGFPE handling
+    stack_t ss;
+    ss.ss_sp = malloc(SIGSTKSZ);
+    ss.ss_size = SIGSTKSZ;
+    ss.ss_flags = 0;
+    sigaltstack(&ss, NULL);
+
+    // Install SIGFPE handler that uses alternate stack
     struct sigaction sa;
-    sa.sa_handler = signal_handler;
+    sa.sa_handler = sigfpe_signal_handler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_NODEFER; // Crucial: Allow the signal to trigger again
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
     sigaction(SIGFPE, &sa, NULL);
+
+    s_sigfpeCaught.store(false, std::memory_order_release);
 
     QMutexLocker locker(&libraryMutex);
 
@@ -74,160 +83,155 @@ void PicoLLMWorker::run() {
     if (!QFileInfo::exists(expandedPath)) {
         emit error(QLatin1String("Model file not found: ") + expandedPath);
         signal(SIGFPE, SIG_DFL);
+        free(ss.ss_sp);
         return;
     }
 
-    if (setjmp(crash_env) == 0) {
     // Load model
     model_t model;
     try {
         if (model_load(&model, expandedPath.toUtf8().constData(), 0) != 0) {
             emit error(QLatin1String("Failed to load model from: ") + expandedPath);
             signal(SIGFPE, SIG_DFL);
+            free(ss.ss_sp);
             return;
         }
     } catch (const std::exception& err) {
         qCDebug(deepPluginLog) << "C++ exception on model_load: " << err.what();
         emit error(QLatin1String("C++ exception on model_load: ") + QLatin1String(err.what()));
         signal(SIGFPE, SIG_DFL);
+        free(ss.ss_sp);
         return;
     } catch (...) {
         qCDebug(deepPluginLog) << "Unknown exception on model_load";
         emit error(QLatin1String("Unknown exception on model_load"));
         signal(SIGFPE, SIG_DFL);
+        free(ss.ss_sp);
         return;
     }
 
-    try{
-
-    // Validate model configuration
-    if (model.config.vocab_size <= 0) {
-        model_free(&model);
-        emit error(QLatin1String("Model has invalid vocabulary size"));
-        signal(SIGFPE, SIG_DFL);
-        return;
-    }
-    if (model.config.max_seq_len <= 0) {
-        model_free(&model);
-        emit error(QLatin1String("Model has invalid max sequence length"));
-        signal(SIGFPE, SIG_DFL);
-        return;
-    }
-
-    tensor_set_threads(m_threads);
-
-    // Load tokenizer
-    tokenizer_t tokenizer;
-    if (tokenizer_load(&tokenizer, &model) != 0) {
-        model_free(&model);
-        emit error(QLatin1String("Failed to load tokenizer"));
-        signal(SIGFPE, SIG_DFL);
-        return;
-    }
-
-    // Check for empty prompt
-    QByteArray promptBytes = m_prompt.toUtf8();
-    if (promptBytes.isEmpty()) {
-        tokenizer_free(&tokenizer);
-        model_free(&model);
-        emit error(QLatin1String("Empty prompt"));
-        signal(SIGFPE, SIG_DFL);
-        return;
-    }
-
-    // Encode prompt
-    int maxPromptTokens = promptBytes.size() + 3;
-    int *promptTokens = (int*)malloc(maxPromptTokens * sizeof(int));
-    int nPrompt = tokenizer_encode(&tokenizer, promptBytes.constData(),
-                                   promptTokens, maxPromptTokens, 1);
-    if (nPrompt <= 0) {
-        free(promptTokens);
-        tokenizer_free(&tokenizer);
-        model_free(&model);
-        emit error(QLatin1String("Failed to encode prompt"));
-        signal(SIGFPE, SIG_DFL);
-        return;
-    }
-
-    // Init sampler
-    sampler_t sampler;
-    sampler_init(&sampler, m_temperature, m_top_p, m_seed);
-
-    // Init grammar (disabled for now)
-    grammar_state_t grammar;
-    grammar_init(&grammar, GRAMMAR_NONE, &tokenizer);
-
-    // Generation buffer
-    size_t outCap = 256;
-    char *outStr = (char*)malloc(outCap);
-    outStr[0] = '\0';
-    size_t outLen = 0;
-
-    int token = promptTokens[0];
-    int pos = 0;
-    int totalSteps = nPrompt + m_maxTokens;
-    if (totalSteps > model.config.max_seq_len)
-        totalSteps = model.config.max_seq_len;
-
-    for (; pos < totalSteps; ++pos) {
-        float *logits = model_forward(&model, token, pos);
-
-        int next;
-        if (pos < nPrompt - 1) {
-            next = promptTokens[pos + 1];
-        } else {
-            grammar_apply(&grammar, logits, model.config.vocab_size);
-            next = sampler_sample(&sampler, logits, model.config.vocab_size);
-            grammar_advance(&grammar, &tokenizer, next);
-
-            const char *piece = tokenizer_decode(&tokenizer, token, next);
-            size_t pieceLen = strlen(piece);
-            if (outLen + pieceLen + 1 > outCap) {
-                outCap *= 2;
-                outStr = (char*)realloc(outStr, outCap);
-            }
-            memcpy(outStr + outLen, piece, pieceLen);
-            outLen += pieceLen;
-            outStr[outLen] = '\0';
-
-            if (next == (int)tokenizer.eos_id)
-                break;
-            if (grammar_is_complete(&grammar))
-                break;
+    try {
+        // Validate model configuration
+        if (model.config.vocab_size <= 0) {
+            model_free(&model);
+            emit error(QLatin1String("Model has invalid vocabulary size"));
+            signal(SIGFPE, SIG_DFL);
+            free(ss.ss_sp);
+            return;
         }
-        token = next;
-    }
+        if (model.config.max_seq_len <= 0) {
+            model_free(&model);
+            emit error(QLatin1String("Model has invalid max sequence length"));
+            signal(SIGFPE, SIG_DFL);
+            free(ss.ss_sp);
+            return;
+        }
 
-    // Cleanup
-    free(promptTokens);
-    grammar_free(&grammar);
-    tokenizer_free(&tokenizer);
-    model_free(&model);
+        tensor_set_threads(m_threads);
 
-    // Emit result
-    QString result = QString::fromUtf8(outStr);
-    free(outStr);
-    emit finished(result);
+        // Load tokenizer
+        tokenizer_t tokenizer;
+        if (tokenizer_load(&tokenizer, &model) != 0) {
+            model_free(&model);
+            emit error(QLatin1String("Failed to load tokenizer"));
+            signal(SIGFPE, SIG_DFL);
+            free(ss.ss_sp);
+            return;
+        }
 
+        // Check for empty prompt
+        QByteArray promptBytes = m_prompt.toUtf8();
+        if (promptBytes.isEmpty()) {
+            tokenizer_free(&tokenizer);
+            model_free(&model);
+            emit error(QLatin1String("Empty prompt"));
+            signal(SIGFPE, SIG_DFL);
+            free(ss.ss_sp);
+            return;
+        }
+
+        // Encode prompt using RAII vector
+        int maxPromptTokens = promptBytes.size() + 3;
+        std::vector<int> promptTokens(maxPromptTokens);
+        int nPrompt = tokenizer_encode(&tokenizer, promptBytes.constData(),
+                                       promptTokens.data(), maxPromptTokens, 1);
+        if (nPrompt <= 0) {
+            tokenizer_free(&tokenizer);
+            model_free(&model);
+            emit error(QLatin1String("Failed to encode prompt"));
+            signal(SIGFPE, SIG_DFL);
+            free(ss.ss_sp);
+            return;
+        }
+
+        // Init sampler
+        sampler_t sampler;
+        sampler_init(&sampler, m_temperature, m_top_p, m_seed);
+
+        // Init grammar (disabled for now)
+        grammar_state_t grammar;
+        grammar_init(&grammar, GRAMMAR_NONE, &tokenizer);
+
+        // Generation buffer using QByteArray for RAII
+        QByteArray outBuffer;
+        outBuffer.reserve(256);
+
+        int token = promptTokens[0];
+        int pos = 0;
+        int totalSteps = nPrompt + m_maxTokens;
+        if (totalSteps > model.config.max_seq_len)
+            totalSteps = model.config.max_seq_len;
+
+        for (; pos < totalSteps; ++pos) {
+            // Check for SIGFPE after each forward pass
+            if (s_sigfpeCaught.load(std::memory_order_acquire)) {
+                grammar_free(&grammar);
+                tokenizer_free(&tokenizer);
+                model_free(&model);
+                throw std::runtime_error("Floating point exception (division by zero in model library)");
+            }
+
+            float *logits = model_forward(&model, token, pos);
+
+            int next;
+            if (pos < nPrompt - 1) {
+                next = promptTokens[pos + 1];
+            } else {
+                grammar_apply(&grammar, logits, model.config.vocab_size);
+                next = sampler_sample(&sampler, logits, model.config.vocab_size);
+                grammar_advance(&grammar, &tokenizer, next);
+
+                const char *piece = tokenizer_decode(&tokenizer, token, next);
+                outBuffer.append(piece);
+
+                if (next == (int)tokenizer.eos_id)
+                    break;
+                if (grammar_is_complete(&grammar))
+                    break;
+            }
+            token = next;
+        }
+
+        // Cleanup
+        grammar_free(&grammar);
+        tokenizer_free(&tokenizer);
+        model_free(&model);
+
+        // Emit result
+        QString result = QString::fromUtf8(outBuffer);
+        emit finished(result);
 
     } catch (const std::bad_alloc& e) {
-        // Specifically catch out-of-memory errors (common with LLMs)
         emit error(QString("Critical: Out of Memory during inference: %1").arg(e.what()));
     } catch (const std::exception& e) {
-        // Catch all other standard C++ exceptions
         emit error(QString("Worker Exception: %1").arg(e.what()));
     } catch (...) {
-        // Absolute fallback for unknown/non-standard errors
         emit error("An unknown fatal error occurred in the LLM thread.");
     }
-    } else {
-        // --- RECOVERED FROM CRASH ---
-        // The CPU jumped here after the "divide error"
-        emit error("KDeep Internal Crash: Invalid model math (Divide by Zero in .so)");
-    }
 
-    // Cleanup handler
+    // Restore default signal handler and cleanup
     signal(SIGFPE, SIG_DFL);
+    free(ss.ss_sp);
 }
 
 // ------------------------------------------------------------
@@ -262,10 +266,17 @@ DeepAssistantPluginView::DeepAssistantPluginView(DeepAssistantPlugin *plugin, KT
     m_networkManager = new NetworkManager(this);
     qCDebug(deepPluginLog) << "NetworkManager created";
 
+    m_openCodeManager = new OpenCodeManager(this);
+    qCDebug(deepPluginLog) << "OpenCodeManager created";
+
     connect(m_askAIButton, &QPushButton::clicked,
             this, &DeepAssistantPluginView::onAskAIClicked);
     connect(m_networkManager, &NetworkManager::requestFinished,
             this, &DeepAssistantPluginView::handleAIResponse);
+    connect(m_openCodeManager, &OpenCodeManager::requestFinished,
+            this, &DeepAssistantPluginView::handleAIResponse);
+    connect(m_openCodeManager, &OpenCodeManager::error,
+            this, &DeepAssistantPluginView::handlePicolmError);
     qCDebug(deepPluginLog) << "Connections made";
 
     connect(m_mainWindow, &KTextEditor::MainWindow::viewChanged,
@@ -311,6 +322,41 @@ void DeepAssistantPluginView::onAskAIClicked()
     // Load settings from KConfig
     KSharedConfigPtr config = KSharedConfig::openConfig("kdeeprc");
     KConfigGroup group(config, "General");
+
+    bool useOpenCode = group.readEntry("useOpenCode", false);
+    if (useOpenCode) {
+        QString openCodeUrl = group.readEntry("openCodeUrl", "http://127.0.0.1:4096");
+        QString openCodeUser = group.readEntry("openCodeUser", "opencode");
+        QString openCodePass = group.readEntry("openCodePass", QString());
+        QString openCodeModel = group.readEntry("openCodeModel", QString());
+        QString openCodeAgent = group.readEntry("openCodeAgent", "build");
+        QString openCodeEffort = group.readEntry("openCodeEffort", QString());
+
+        if (openCodeUrl.isEmpty()) {
+            m_previewer->setPlainText(i18n("OpenCode URL not set. Please configure it in Kate's settings."));
+            return;
+        }
+
+        if (openCodeModel.isEmpty()) {
+            m_previewer->setPlainText(i18n("OpenCode model not set. Please configure it in Kate's settings."));
+            return;
+        }
+
+        // Split "providerID/modelID"
+        int slashIdx = openCodeModel.indexOf('/');
+        QString providerID = (slashIdx > 0) ? openCodeModel.left(slashIdx) : openCodeModel;
+        QString modelID = (slashIdx > 0) ? openCodeModel.mid(slashIdx + 1) : openCodeModel;
+
+        QString code = activeView->document()->text();
+        QString prompt = i18n("Explain the following C++ code and suggest improvements:");
+
+        m_askAIButton->setEnabled(false);
+        m_askAIButton->setText(i18n("Asking..."));
+        m_previewer->setPlainText(i18n("Asking OpenCode, please wait..."));
+
+        m_openCodeManager->sendRequest(openCodeUrl, openCodeUser, openCodePass, prompt, code, providerID, modelID, openCodeAgent, openCodeEffort);
+        return;
+    }
 
     bool usePicolm = group.readEntry("usePicolm", false);
     if (usePicolm) {

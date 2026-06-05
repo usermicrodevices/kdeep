@@ -63,8 +63,10 @@ target_sources(kdeep
     src/plugin.cpp
     src/networkmanager.cpp
     src/kdeepconfig.cpp
+    src/opencodemanager.cpp
     include/kdeepconfig.hpp
     include/networkmanager.hpp
+    include/opencodemanager.hpp
     include/plugin.hpp
 )
 

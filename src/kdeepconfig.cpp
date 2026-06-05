@@ -1,4 +1,6 @@
 #include "kdeepconfig.hpp"
+#include <QLoggingCategory>
+Q_LOGGING_CATEGORY(deepConfigLog, "kate.deep.config", QtDebugMsg)
 
 DeepConfig::DeepConfig(QWidget *parent)
     : KTextEditor::ConfigPage(parent)
@@ -36,8 +38,8 @@ DeepConfig::DeepConfig(QWidget *parent)
     layout->addRow(i18n("Temperature (0-2):"), m_temperatureSpin);
 
     m_maxTokensSpin = new QSpinBox(this);
-    m_maxTokensSpin->setRange(1, 8192);
-    m_maxTokensSpin->setSingleStep(100);
+    m_maxTokensSpin->setRange(1, 65536);
+    m_maxTokensSpin->setSingleStep(256);
     layout->addRow(i18n("Max Tokens:"), m_maxTokensSpin);
 
     m_useGpt4allCheck = new QCheckBox(i18n("Use GPT4All API Server (local, any compatibility, no API key and model needed)"), this);
@@ -62,17 +64,78 @@ DeepConfig::DeepConfig(QWidget *parent)
 
     connect(m_picolmModelBrowseButton, &QPushButton::clicked, this, &DeepConfig::browsePicolmModel);
 
-    // Load current settings
+    m_useOpenCodeCheck = new QCheckBox(i18n("Use OpenCode Server (local AI coding agent)"), this);
+    layout->addRow(m_useOpenCodeCheck);
+
+    m_openCodeUrlEdit = new QLineEdit(this);
+    m_openCodeUrlEdit->setPlaceholderText("http://127.0.0.1:4096");
+    layout->addRow(i18n("OpenCode URL:"), m_openCodeUrlEdit);
+
+    m_openCodeUserEdit = new QLineEdit(this);
+    m_openCodeUserEdit->setPlaceholderText("opencode");
+    layout->addRow(i18n("OpenCode Username:"), m_openCodeUserEdit);
+
+    m_openCodePassEdit = new QLineEdit(this);
+    m_openCodePassEdit->setEchoMode(QLineEdit::Password);
+    layout->addRow(i18n("OpenCode Password:"), m_openCodePassEdit);
+
+    m_openCodeModelCombo = new QComboBox(this);
+    m_openCodeModelCombo->setEditable(true);
+    m_openCodeModelCombo->setDuplicatesEnabled(false);
+
+    QHBoxLayout *openCodeModelLayout = new QHBoxLayout;
+    openCodeModelLayout->addWidget(m_openCodeModelCombo);
+    m_refreshOpenCodeBtn = new QPushButton(i18n("Refresh"), this);
+    openCodeModelLayout->addWidget(m_refreshOpenCodeBtn);
+    layout->addRow(i18n("OpenCode Model:"), openCodeModelLayout);
+
+    m_openCodeAgentCombo = new QComboBox(this);
+    m_openCodeAgentCombo->addItem(i18n("Build (default)"), "build");
+    m_openCodeAgentCombo->addItem(i18n("Plan"), "plan");
+    m_openCodeAgentCombo->addItem(i18n("General"), "general");
+    layout->addRow(i18n("OpenCode Agent:"), m_openCodeAgentCombo);
+
+    m_openCodeEffortCombo = new QComboBox(this);
+    m_openCodeEffortCombo->addItem(i18n("Default (model preset)"), "");
+    m_openCodeEffortCombo->addItem(i18n("Low"), "low");
+    m_openCodeEffortCombo->addItem(i18n("Medium"), "medium");
+    m_openCodeEffortCombo->addItem(i18n("High"), "high");
+    layout->addRow(i18n("Thinking Effort:"), m_openCodeEffortCombo);
+
+    m_openCodeManager = new OpenCodeManager(this);
+    connect(m_refreshOpenCodeBtn, &QPushButton::clicked, this, &DeepConfig::refreshOpenCodeProviders);
+    connect(m_openCodeManager, &OpenCodeManager::providersReady, this, [this](const QJsonArray &providers) {
+        m_openCodeModelCombo->clear();
+        for (const QJsonValue &val : providers) {
+            QJsonObject provider = val.toObject();
+            QString providerID = provider["id"].toString();
+            QJsonObject models = provider["models"].toObject();
+            for (auto it = models.begin(); it != models.end(); ++it) {
+                QString modelID = it.key();
+                QString displayName = it.value().toObject()["name"].toString();
+                if (displayName.isEmpty()) displayName = modelID;
+                m_openCodeModelCombo->addItem(displayName, providerID + "/" + modelID);
+            }
+        }
+        m_refreshOpenCodeBtn->setEnabled(true);
+        if (m_openCodeModelCombo->count() > 0) {
+            qCDebug(deepConfigLog) << "OpenCode: loaded" << m_openCodeModelCombo->count() << "models";
+        }
+    });
+    connect(m_openCodeManager, &OpenCodeManager::error, this, [this](const QString &msg) {
+        qCDebug(deepConfigLog) << "OpenCode provider fetch error:" << msg;
+        m_refreshOpenCodeBtn->setEnabled(true);
+    });
+
     loadSettings();
 
-    // Connect checkbox to dynamically hide/show API key field
     connect(m_useGpt4allCheck, &QCheckBox::toggled, this, [this](bool checked) {
-        //ATTENTION: DO NOT CALL LINE BELOW - API KEY NOT POSSIBLE RESTORE LATER - IT WILL LOSE
-        //if(checked){m_apiKeyEdit->clear();}
         if(checked)
         {
             if(m_usePicolmCheck->isChecked())
                 m_usePicolmCheck->setChecked(false);
+            if(m_useOpenCodeCheck->isChecked())
+                m_useOpenCodeCheck->setChecked(false);
         }
         if(!m_baseUrlEdit->isEnabled())
             m_baseUrlEdit->setEnabled(true);
@@ -86,6 +149,14 @@ DeepConfig::DeepConfig(QWidget *parent)
             m_threadsSpin->setEnabled(false);
         if(m_seedSpin->isEnabled())
             m_seedSpin->setEnabled(false);
+        // OpenCode fields
+        m_openCodeUrlEdit->setEnabled(!checked);
+        m_openCodeUserEdit->setEnabled(!checked);
+        m_openCodePassEdit->setEnabled(!checked);
+        m_openCodeModelCombo->setEnabled(!checked);
+        m_openCodeAgentCombo->setEnabled(!checked);
+        m_openCodeEffortCombo->setEnabled(!checked);
+        m_refreshOpenCodeBtn->setEnabled(!checked);
     });
 
     connect(m_usePicolmCheck, &QCheckBox::toggled, this, [this](bool checked) {
@@ -93,6 +164,8 @@ DeepConfig::DeepConfig(QWidget *parent)
         {
             if(m_useGpt4allCheck->isChecked())
                 m_useGpt4allCheck->setChecked(false);
+            if(m_useOpenCodeCheck->isChecked())
+                m_useOpenCodeCheck->setChecked(false);
         }
         if(m_refreshModelsBtn->isEnabled())
             m_refreshModelsBtn->setEnabled(false);
@@ -102,6 +175,41 @@ DeepConfig::DeepConfig(QWidget *parent)
         m_picolmModelBrowseButton->setEnabled(checked);
         m_threadsSpin->setEnabled(checked);
         m_seedSpin->setEnabled(checked);
+        // OpenCode fields
+        m_openCodeUrlEdit->setEnabled(!checked);
+        m_openCodeUserEdit->setEnabled(!checked);
+        m_openCodePassEdit->setEnabled(!checked);
+        m_openCodeModelCombo->setEnabled(!checked);
+        m_openCodeAgentCombo->setEnabled(!checked);
+        m_openCodeEffortCombo->setEnabled(!checked);
+        m_refreshOpenCodeBtn->setEnabled(!checked);
+    });
+
+    connect(m_useOpenCodeCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if(checked)
+        {
+            if(m_useGpt4allCheck->isChecked())
+                m_useGpt4allCheck->setChecked(false);
+            if(m_usePicolmCheck->isChecked())
+                m_usePicolmCheck->setChecked(false);
+        }
+        // DeepSeek fields
+        m_baseUrlEdit->setEnabled(!checked);
+        m_apiKeyEdit->setEnabled(!checked);
+        m_refreshModelsBtn->setEnabled(!checked);
+        // PicoLLM fields
+        m_picolmModelPathEdit->setEnabled(!checked);
+        m_picolmModelBrowseButton->setEnabled(!checked);
+        m_threadsSpin->setEnabled(!checked);
+        m_seedSpin->setEnabled(!checked);
+        // OpenCode fields
+        m_openCodeUrlEdit->setEnabled(checked);
+        m_openCodeUserEdit->setEnabled(checked);
+        m_openCodePassEdit->setEnabled(checked);
+        m_openCodeModelCombo->setEnabled(checked);
+        m_openCodeAgentCombo->setEnabled(checked);
+        m_openCodeEffortCombo->setEnabled(checked);
+        m_refreshOpenCodeBtn->setEnabled(checked);
     });
 }
 
@@ -146,14 +254,22 @@ void DeepConfig::defaults()
     m_temperatureSpin->setValue(0.7);
     m_maxTokensSpin->setValue(4096);
     m_useGpt4allCheck->setChecked(false);
+    m_usePicolmCheck->setChecked(false);
+    m_useOpenCodeCheck->setChecked(false);
     m_threadsSpin->setValue(4);
     m_seedSpin->setValue(42);
+    m_openCodeUrlEdit->setText(qEnvironmentVariable("OPENCODE_SERVER_URL", "http://127.0.0.1:4096"));
+    m_openCodeUserEdit->setText(qEnvironmentVariable("OPENCODE_SERVER_USERNAME", "opencode"));
+    m_openCodePassEdit->setText(qEnvironmentVariable("OPENCODE_SERVER_PASSWORD", QString()));
+    m_openCodeModelCombo->clear();
+    m_openCodeAgentCombo->setCurrentIndex(m_openCodeAgentCombo->findData("build"));
+    m_openCodeEffortCombo->setCurrentIndex(0);
     emit changed();
 }
 
 void DeepConfig::loadSettings()
 {
-    delete m_config; // avoid leak if called multiple times
+    delete m_config;
     KSharedConfigPtr config = KSharedConfig::openConfig("kdeeprc");
     m_config = new KConfigGroup(config, "General");
 
@@ -166,16 +282,44 @@ void DeepConfig::loadSettings()
     m_useGpt4allCheck->setChecked(m_config->readEntry("useGpt4all", false));
 
     m_usePicolmCheck->setChecked(m_config->readEntry("usePicolm", false));
+    m_useOpenCodeCheck->setChecked(m_config->readEntry("useOpenCode", false));
+
     if (m_useGpt4allCheck->isChecked() && m_usePicolmCheck->isChecked())
     {
         qWarning() << "useGpt4all and usePicolm can't same time both be true";
         qWarning() << "auto correct it: useGpt4all=true and usePicolm=false";
         m_usePicolmCheck->setChecked(false);
     }
+    if (m_useGpt4allCheck->isChecked() && m_useOpenCodeCheck->isChecked())
+    {
+        qWarning() << "useGpt4all and useOpenCode can't same time both be true";
+        m_useOpenCodeCheck->setChecked(false);
+    }
+    if (m_usePicolmCheck->isChecked() && m_useOpenCodeCheck->isChecked())
+    {
+        qWarning() << "usePicolm and useOpenCode can't same time both be true";
+        m_useOpenCodeCheck->setChecked(false);
+    }
 
     m_picolmModelPathEdit->setText(m_config->readEntry("picolmModelPath", QString()));
     m_threadsSpin->setValue(m_config->readEntry("threads", 4));
     m_seedSpin->setValue(m_config->readEntry("seed", 42));
+
+    m_openCodeUrlEdit->setText(m_config->readEntry("openCodeUrl", qEnvironmentVariable("OPENCODE_SERVER_URL", "http://127.0.0.1:4096")));
+    m_openCodeUserEdit->setText(m_config->readEntry("openCodeUser", qEnvironmentVariable("OPENCODE_SERVER_USERNAME", "opencode")));
+    m_openCodePassEdit->setText(m_config->readEntry("openCodePass", qEnvironmentVariable("OPENCODE_SERVER_PASSWORD", QString())));
+    QString savedModel = m_config->readEntry("openCodeModel", QString());
+    if (!savedModel.isEmpty()) {
+        int idx = m_openCodeModelCombo->findData(savedModel);
+        if (idx >= 0) m_openCodeModelCombo->setCurrentIndex(idx);
+        else m_openCodeModelCombo->setEditText(savedModel);
+    }
+    QString savedAgent = m_config->readEntry("openCodeAgent", "build");
+    int agentIdx = m_openCodeAgentCombo->findData(savedAgent);
+    if (agentIdx >= 0) m_openCodeAgentCombo->setCurrentIndex(agentIdx);
+    QString savedEffort = m_config->readEntry("openCodeEffort", "");
+    int effortIdx = m_openCodeEffortCombo->findData(savedEffort);
+    if (effortIdx >= 0) m_openCodeEffortCombo->setCurrentIndex(effortIdx);
 
     if (m_useGpt4allCheck->isChecked())
     {
@@ -184,12 +328,36 @@ void DeepConfig::loadSettings()
         m_picolmModelPathEdit->setEnabled(false);
         m_threadsSpin->setEnabled(false);
         m_seedSpin->setEnabled(false);
+        m_openCodeUrlEdit->setEnabled(false);
+        m_openCodeUserEdit->setEnabled(false);
+        m_openCodePassEdit->setEnabled(false);
+        m_openCodeModelCombo->setEnabled(false);
+        m_openCodeAgentCombo->setEnabled(false);
+        m_openCodeEffortCombo->setEnabled(false);
+        m_refreshOpenCodeBtn->setEnabled(false);
     }
     else if (m_usePicolmCheck->isChecked())
     {
         m_baseUrlEdit->setEnabled(false);
         m_apiKeyEdit->setEnabled(false);
         m_refreshModelsBtn->setEnabled(false);
+        m_openCodeUrlEdit->setEnabled(false);
+        m_openCodeUserEdit->setEnabled(false);
+        m_openCodePassEdit->setEnabled(false);
+        m_openCodeModelCombo->setEnabled(false);
+        m_openCodeAgentCombo->setEnabled(false);
+        m_openCodeEffortCombo->setEnabled(false);
+        m_refreshOpenCodeBtn->setEnabled(false);
+    }
+    else if (m_useOpenCodeCheck->isChecked())
+    {
+        m_baseUrlEdit->setEnabled(false);
+        m_apiKeyEdit->setEnabled(false);
+        m_refreshModelsBtn->setEnabled(false);
+        m_picolmModelBrowseButton->setEnabled(false);
+        m_picolmModelPathEdit->setEnabled(false);
+        m_threadsSpin->setEnabled(false);
+        m_seedSpin->setEnabled(false);
     }
     else
     {
@@ -198,6 +366,13 @@ void DeepConfig::loadSettings()
         m_threadsSpin->setEnabled(false);
         m_seedSpin->setEnabled(false);
         m_refreshModelsBtn->setEnabled(false);
+        m_openCodeUrlEdit->setEnabled(false);
+        m_openCodeUserEdit->setEnabled(false);
+        m_openCodePassEdit->setEnabled(false);
+        m_openCodeModelCombo->setEnabled(false);
+        m_openCodeAgentCombo->setEnabled(false);
+        m_openCodeEffortCombo->setEnabled(false);
+        m_refreshOpenCodeBtn->setEnabled(false);
     }
 }
 
@@ -212,9 +387,16 @@ void DeepConfig::saveSettings()
     group.writeEntry("maxTokens", m_maxTokensSpin->value());
     group.writeEntry("useGpt4all", m_useGpt4allCheck->isChecked());
     group.writeEntry("usePicolm", m_usePicolmCheck->isChecked());
+    group.writeEntry("useOpenCode", m_useOpenCodeCheck->isChecked());
     group.writeEntry("picolmModelPath", m_picolmModelPathEdit->text());
     group.writeEntry("threads", m_threadsSpin->value());
     group.writeEntry("seed", m_seedSpin->value());
+    group.writeEntry("openCodeUrl", m_openCodeUrlEdit->text());
+    group.writeEntry("openCodeUser", m_openCodeUserEdit->text());
+    group.writeEntry("openCodePass", m_openCodePassEdit->text());
+    group.writeEntry("openCodeModel", m_openCodeModelCombo->currentData().toString());
+    group.writeEntry("openCodeAgent", m_openCodeAgentCombo->currentData().toString());
+    group.writeEntry("openCodeEffort", m_openCodeEffortCombo->currentData().toString());
     group.sync();
 }
 
@@ -223,7 +405,6 @@ void DeepConfig::browsePicolmModel()
     QString file = QFileDialog::getOpenFileName(this, i18n("Select PicoLLM model file"),
                                                 QDir::homePath(), i18n("GGUF files (*.gguf)"));
     if (!file.isEmpty()) {
-        // Convert to relative home path if under home
         if (file.startsWith(QDir::homePath())) {
             file = "~" + file.mid(QDir::homePath().length());
         }
@@ -244,11 +425,13 @@ void DeepConfig::refreshModels()
     }
 
     QUrl url(baseUrl);
-    if (!url.path().endsWith("/v1") && !url.path().contains("/v1")) {
-        url.setPath(url.path() + (url.path().endsWith('/') ? "v1/models" : "/v1/models"));
-    } else {
-        url.setPath(url.path() + (url.path().endsWith('/') ? "models" : "/models"));
+    QString path = url.path();
+    if (!path.endsWith('/')) path += '/';
+    if (!path.contains("/v1/")) {
+        path += "v1/";
     }
+    path += "models";
+    url.setPath(path);
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
@@ -303,4 +486,19 @@ void DeepConfig::refreshModels()
         reply->deleteLater();
         nam->deleteLater();
     });
+}
+
+void DeepConfig::refreshOpenCodeProviders()
+{
+    QString url = m_openCodeUrlEdit->text();
+    if (url.isEmpty()) {
+        m_openCodeUrlEdit->setFocus();
+        return;
+    }
+
+    QString username = m_openCodeUserEdit->text();
+    QString password = m_openCodePassEdit->text();
+
+    m_refreshOpenCodeBtn->setEnabled(false);
+    m_openCodeManager->fetchProviders(url, username, password);
 }
