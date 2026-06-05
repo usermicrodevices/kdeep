@@ -1,7 +1,8 @@
 #pragma once
 
 #include <csignal>
-#include <setjmp.h>
+#include <atomic>
+#include <vector>
 
 #include <memory>
 #include <exception>
@@ -36,8 +37,10 @@ extern "C" {
 
 #include "kdeepconfig.hpp"
 #include "networkmanager.hpp"
+#include "opencodemanager.hpp"
 
 class NetworkManager;
+class OpenCodeManager;
 class DeepAssistantPluginView;
 
 class DeepAssistantPlugin : public KTextEditor::Plugin
@@ -59,6 +62,8 @@ class PicoLLMWorker : public QObject
 {
     Q_OBJECT
 public:
+    static std::atomic<bool> s_sigfpeCaught;
+    
     void setParams(const QString &modelPath,
                    const QString &prompt,
                    int maxTokens,
@@ -103,6 +108,7 @@ private:
     QTextBrowser *m_previewer = nullptr;
     QPushButton *m_askAIButton = nullptr;
     NetworkManager *m_networkManager = nullptr;
+    OpenCodeManager *m_openCodeManager = nullptr;
 
     // PicoLLM background thread
     QThread *m_picolmThread = nullptr;

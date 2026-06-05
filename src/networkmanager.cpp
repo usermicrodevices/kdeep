@@ -49,7 +49,11 @@ void NetworkManager::sendRequest(const QString &baseUrl, const QString &apiKey,
 
 void NetworkManager::onReplyFinished(QNetworkReply *reply)
 {
-    // (unchanged from original – error handling remains the same)
+    if (!reply) {
+        emit requestFinished("Error: Null reply received");
+        return;
+    }
+
     int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     QByteArray responseData = reply->readAll();
 
