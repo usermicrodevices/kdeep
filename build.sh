@@ -28,14 +28,17 @@ done
 
 if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     echo "Missing required packages: ${MISSING_PACKAGES[*]}"
-    read -p "Install them now? (Y/n) " reply
-    if [[ $reply =~ ^[Yy]$ ]] || [[ -z $reply ]]; then
-        sudo apt update
-        sudo apt install -y "${MISSING_PACKAGES[@]}"
-    else
-        echo "Please install the missing packages and rerun the script."
-        exit 1
-    fi
+    read -p "Install them now? [Y/n] " reply
+    case "$reply" in
+        [Yy]|"")
+            sudo apt update
+            sudo apt install -y "${MISSING_PACKAGES[@]}"
+            ;;
+        *)
+            echo "Please install the missing packages and rerun the script."
+            exit 1
+            ;;
+    esac
 else
     echo "All required packages are installed."
 fi
@@ -47,6 +50,7 @@ fi
 
 
 PICOLM_DIR="$THIRDPARTY_DIR/picolm"
+PICOLM_UPDATED=0
 if [ ! -d "$PICOLM_DIR" ]; then
     echo "Cloning PicoLLM repository..."
     git clone git@github.com:RightNow-AI/picolm.git "$PICOLM_DIR"
@@ -54,9 +58,12 @@ else
     echo "PicoLLM repository already exists."
     read -p "Updating $PICOLM_DIR from Github...? (y/N) " reply
     echo
-    if [[ $reply =~ ^[Yy]$ ]] || [[ -z $reply ]]; then
-        (cd "$PICOLM_DIR" && git pull)
-    fi
+    case "$reply" in
+        [Yy]|"")
+            (cd "$PICOLM_DIR" && git pull)
+            PICOLM_UPDATED=1
+            ;;
+    esac
 fi
 
 REQUIRED_FILES=(
@@ -84,12 +91,24 @@ done
 BUILD_DIR="build_kf6"
 
 if [ -d "$BUILD_DIR" ]; then
-    echo "Build directory already exists. Do you want to clean it? (y/N)"
+    echo "Directory $BUILD_DIR already exists. Do you want to clean it? (y/N)"
     read -p "Clean and rebuild? " clean_reply
-    if [[ $clean_reply =~ ^[Yy]$ ]]; then
-        rm -rf "$BUILD_DIR"
-        mkdir -p "$BUILD_DIR"
-    fi
+    case "$clean_reply" in
+        [Yy]|"")
+            if [ "$PICOLM_UPDATED" -eq 1 ]; then
+                echo "Thirdparty updated – full clean rebuild..."
+                rm -rf "$BUILD_DIR"
+                mkdir -p "$BUILD_DIR"
+            else
+                echo "Cleaning kdeep build files only (keeping picolm cache)..."
+                rm -f "$BUILD_DIR"/CMakeFiles/kdeep.dir/*.o
+                rm -f "$BUILD_DIR"/CMakeFiles/kdeep.dir/**/*.o
+                rm -f "$BUILD_DIR"/kdeep_autogen/*. moc_*
+                rm -f "$BUILD_DIR"/kdeep.so
+                rm -f "$BUILD_DIR"/CMakeCache.txt
+            fi
+            ;;
+    esac
 else
     mkdir -p "$BUILD_DIR"
 fi
@@ -112,9 +131,10 @@ check_native_kate() {
 
 if check_native_kate; then
     echo "Native Kate (via apt) detected."
-    read -p "Install plugin system-wide (for native Kate) as well? (Y/n) " reply
+    read -p "Install plugin system-wide (for native Kate) as well? [Y/n] " reply
     echo
-    if [[ $reply =~ ^[Yy]$ ]] || [[ -z $reply ]]; then
+    case "$reply" in
+        [Yy]|"")
         echo "Removing any existing system-wide plugin..."
         sudo find /usr/lib /usr/local/lib -path "*/plugins/kf6/ktexteditor/kdeep.so" -type f -delete 2>/dev/null || true
         sudo find /usr/lib/x86_64-linux-gnu/qt6/plugins -name "kdeep.so" -type f -delete 2>/dev/null || true
@@ -132,69 +152,79 @@ if check_native_kate; then
             echo "Error: Failed to install plugin to system location." >&2
             exit 1
         fi
-    fi
+        ;;
+    esac
 else
     echo "Native Kate not detected. Skipping system installation."
 fi
 
 if command -v flatpak &>/dev/null && flatpak list 2>/dev/null | grep -q org.kde.kate; then
     echo "Flatpak Kate detected."
-    read -p "Install plugin for Flatpak Kate? (Y/n) " reply
+    read -p "Install plugin for Flatpak Kate? [Y/n] " reply
     echo
-    if [[ $reply =~ ^[Yy]$ ]] || [[ -z $reply ]]; then
-        FLATPAK_PATH=$(flatpak info --show-location org.kde.kate)
-        if [ -z "$FLATPAK_PATH" ]; then
-            echo "Error: Could not determine Flatpak installation path." >&2
-            exit 1
-        else
-            echo "USED FLATPAK PATH: $FLATPAK_PATH"
-        fi
-
-        RUNTIME=$(flatpak info --show-runtime org.kde.kate)
-        echo "Detected runtime: $RUNTIME"
-        if [[ "$RUNTIME" =~ org\.kde\.Platform.*6 ]]; then
-            echo "Flatpak Kate is KF6-based. Installing..."
-        else
-            echo "Warning: Flatpak Kate might be KF5-based. The plugin may not load."
-            read -p "Continue anyway? (Y/n) " reply2
-            echo
-            if [[ ! $reply2 =~ ^[Yy]$ ]] && [[ -n $reply2 ]]; then
-                echo "Skipping Flatpak installation."
-                exit 0
+    case "$reply" in
+        [Yy]|"")
+            FLATPAK_PATH=$(flatpak info --show-location org.kde.kate)
+            if [ -z "$FLATPAK_PATH" ]; then
+                echo "Error: Could not determine Flatpak installation path." >&2
+                exit 1
+            else
+                echo "USED FLATPAK PATH: $FLATPAK_PATH"
             fi
-        fi
 
-        if [[ "$FLATPAK_PATH" == /var/lib/flatpak/* ]]; then
-            USE_SUDO=1
-        else
-            USE_SUDO=0
-        fi
+            RUNTIME=$(flatpak info --show-runtime org.kde.kate)
+            echo "Detected runtime: $RUNTIME"
+            case "$RUNTIME" in
+                org.kde.Platform*6)
+                    echo "Flatpak Kate is KF6-based. Installing..."
+                    ;;
+                *)
+                    echo "Warning: Flatpak Kate might be KF5-based. The plugin may not load."
+                    read -p "Continue anyway? [Y/n] " reply2
+                    echo
+                    case "$reply2" in
+                        [Yy]|"")
+                            ;;
+                        *)
+                            echo "Skipping Flatpak installation."
+                            exit 0
+                            ;;
+                    esac
+                    ;;
+            esac
 
-        echo "Removing any existing Flatpak plugin..."
-        sudo find /var/lib/flatpak/app/org.kde.kate -name "kdeep.so" -type f -delete 2>/dev/null || true
-        find "$HOME/.local/share/flatpak/app/org.kde.kate" -name "kdeep.so" -type f -delete 2>/dev/null || true
+            if [ "$FLATPAK_PATH" == /var/lib/flatpak/* ]; then
+                USE_SUDO=1
+            else
+                USE_SUDO=0
+            fi
 
-        TARGET_DIR="$FLATPAK_PATH/files/lib/plugins/kf6/ktexteditor"
-        echo "Installing to: $TARGET_DIR"
-        if [ $USE_SUDO -eq 1 ]; then
-            sudo mkdir -p "$TARGET_DIR"
-            sudo cp "$PLUGIN_FILE" "$TARGET_DIR/kdeep.so"
-            sudo chmod 644 "$TARGET_DIR/kdeep.so"
-        else
-            mkdir -p "$TARGET_DIR"
-            cp "$PLUGIN_FILE" "$TARGET_DIR/kdeep.so"
-            chmod 644 "$TARGET_DIR/kdeep.so"
-        fi
+            echo "Removing any existing Flatpak plugin..."
+            sudo find /var/lib/flatpak/app/org.kde.kate -name "kdeep.so" -type f -delete 2>/dev/null || true
+            find "$HOME/.local/share/flatpak/app/org.kde.kate" -name "kdeep.so" -type f -delete 2>/dev/null || true
 
-        if [ -f "$TARGET_DIR/kdeep.so" ]; then
-            echo "Successfully installed to: $TARGET_DIR/kdeep.so"
-        else
-            echo "Error: Failed to install plugin to Flatpak location." >&2
-            exit 1
-        fi
+            TARGET_DIR="$FLATPAK_PATH/files/lib/plugins/kf6/ktexteditor"
+            echo "Installing to: $TARGET_DIR"
+            if [ $USE_SUDO -eq 1 ]; then
+                sudo mkdir -p "$TARGET_DIR"
+                sudo cp "$PLUGIN_FILE" "$TARGET_DIR/kdeep.so"
+                sudo chmod 644 "$TARGET_DIR/kdeep.so"
+            else
+                mkdir -p "$TARGET_DIR"
+                cp "$PLUGIN_FILE" "$TARGET_DIR/kdeep.so"
+                chmod 644 "$TARGET_DIR/kdeep.so"
+            fi
 
-        flatpak override --user --share=network org.kde.kate
-    fi
+            if [ -f "$TARGET_DIR/kdeep.so" ]; then
+                echo "Successfully installed to: $TARGET_DIR/kdeep.so"
+            else
+                echo "Error: Failed to install plugin to Flatpak location." >&2
+                exit 1
+            fi
+
+            flatpak override --user --share=network org.kde.kate
+            ;;
+    esac
 else
     echo "Flatpak Kate not found. Skipping Flatpak installation."
 fi
