@@ -21,22 +21,22 @@ REQUIRED_PACKAGES=(
 
 MISSING_PACKAGES=()
 for pkg in "${REQUIRED_PACKAGES[@]}"; do
-    if ! dpkg -l "$pkg" 2>/dev/null | grep -q "^ii"; then
+    if ! dpkg -s "$pkg" &>/dev/null; then
         MISSING_PACKAGES+=("$pkg")
     fi
 done
 
 if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     echo "Missing required packages: ${MISSING_PACKAGES[*]}"
-    read -p "Install them now? [Y/n] " reply
+    read -r -p "Install them now? [Y/n] " reply
     case "$reply" in
-        [Yy]|"")
-            sudo apt update
-            sudo apt install -y "${MISSING_PACKAGES[@]}"
-            ;;
-        *)
+        [Nn])
             echo "Please install the missing packages and rerun the script."
             exit 1
+            ;;
+        *)
+            sudo apt update
+            sudo apt install -y "${MISSING_PACKAGES[@]}"
             ;;
     esac
 else
@@ -56,12 +56,14 @@ if [ ! -d "$PICOLM_DIR" ]; then
     git clone git@github.com:RightNow-AI/picolm.git "$PICOLM_DIR"
 else
     echo "PicoLLM repository already exists."
-    read -p "Updating $PICOLM_DIR from Github...? (y/N) " reply
+    read -r -p "Updating $PICOLM_DIR from Github...? [y/N] " reply
     echo
     case "$reply" in
-        [Yy]|"")
+        [Yy])
             (cd "$PICOLM_DIR" && git pull)
             PICOLM_UPDATED=1
+            ;;
+        *)
             ;;
     esac
 fi
@@ -91,10 +93,11 @@ done
 BUILD_DIR="build_kf6"
 
 if [ -d "$BUILD_DIR" ]; then
-    echo "Directory $BUILD_DIR already exists. Do you want to clean it? (y/N)"
-    read -p "Clean and rebuild? " clean_reply
-    case "$clean_reply" in
-        [Yy]|"")
+    echo "Directory $BUILD_DIR already exists."
+    read -r -p "Clean and rebuild? [y/N] " reply
+    echo
+    case "$reply" in
+        [Yy])
             if [ "$PICOLM_UPDATED" -eq 1 ]; then
                 echo "Thirdparty updated – full clean rebuild..."
                 rm -rf "$BUILD_DIR"
@@ -107,6 +110,9 @@ if [ -d "$BUILD_DIR" ]; then
                 rm -f "$BUILD_DIR"/kdeep.so
                 rm -f "$BUILD_DIR"/CMakeCache.txt
             fi
+            ;;
+        *)
+            echo "Keeping existing build directory."
             ;;
     esac
 else
@@ -131,28 +137,31 @@ check_native_kate() {
 
 if check_native_kate; then
     echo "Native Kate (via apt) detected."
-    read -p "Install plugin system-wide (for native Kate) as well? [Y/n] " reply
+    read -r -p "Install plugin system-wide (for native Kate) as well? [Y/n] " reply
     echo
     case "$reply" in
-        [Yy]|"")
-        echo "Removing any existing system-wide plugin..."
-        sudo find /usr/lib /usr/local/lib -path "*/plugins/kf6/ktexteditor/kdeep.so" -type f -delete 2>/dev/null || true
-        sudo find /usr/lib/x86_64-linux-gnu/qt6/plugins -name "kdeep.so" -type f -delete 2>/dev/null || true
+        [Nn])
+            echo "Skipping system-wide installation."
+            ;;
+        *)
+            echo "Removing any existing system-wide plugin..."
+            sudo find /usr/lib /usr/local/lib -path "*/plugins/kf6/ktexteditor/kdeep.so" -type f -delete 2>/dev/null || true
+            sudo find /usr/lib/x86_64-linux-gnu/qt6/plugins -name "kdeep.so" -type f -delete 2>/dev/null || true
 
-        PLUGIN_DIR="/usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/ktexteditor"
-        echo "Installing to $PLUGIN_DIR..."
-        sudo mkdir -p "$PLUGIN_DIR"
-        sudo cp "$PLUGIN_FILE" "$PLUGIN_DIR/"
-        sudo chmod 644 "$PLUGIN_DIR/kdeep.so"
-        sudo cmake --install "$BUILD_DIR" --prefix /usr || true
+            PLUGIN_DIR="/usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/ktexteditor"
+            echo "Installing to $PLUGIN_DIR..."
+            sudo mkdir -p "$PLUGIN_DIR"
+            sudo cp "$PLUGIN_FILE" "$PLUGIN_DIR/"
+            sudo chmod 644 "$PLUGIN_DIR/kdeep.so"
+            sudo cmake --install "$BUILD_DIR" --prefix /usr || true
 
-        if [ -f "$PLUGIN_DIR/kdeep.so" ]; then
-            echo "Successfully installed to: $PLUGIN_DIR/kdeep.so"
-        else
-            echo "Error: Failed to install plugin to system location." >&2
-            exit 1
-        fi
-        ;;
+            if [ -f "$PLUGIN_DIR/kdeep.so" ]; then
+                echo "Successfully installed to: $PLUGIN_DIR/kdeep.so"
+            else
+                echo "Error: Failed to install plugin to system location." >&2
+                exit 1
+            fi
+            ;;
     esac
 else
     echo "Native Kate not detected. Skipping system installation."
@@ -160,10 +169,13 @@ fi
 
 if command -v flatpak &>/dev/null && flatpak list 2>/dev/null | grep -q org.kde.kate; then
     echo "Flatpak Kate detected."
-    read -p "Install plugin for Flatpak Kate? [Y/n] " reply
+    read -r -p "Install plugin for Flatpak Kate? [Y/n] " reply
     echo
     case "$reply" in
-        [Yy]|"")
+        [Nn])
+            echo "Skipping Flatpak installation."
+            ;;
+        *)
             FLATPAK_PATH=$(flatpak info --show-location org.kde.kate)
             if [ -z "$FLATPAK_PATH" ]; then
                 echo "Error: Could not determine Flatpak installation path." >&2
@@ -180,14 +192,14 @@ if command -v flatpak &>/dev/null && flatpak list 2>/dev/null | grep -q org.kde.
                     ;;
                 *)
                     echo "Warning: Flatpak Kate might be KF5-based. The plugin may not load."
-                    read -p "Continue anyway? [Y/n] " reply2
+                    read -r -p "Continue anyway? [Y/n] " reply2
                     echo
                     case "$reply2" in
-                        [Yy]|"")
-                            ;;
-                        *)
+                        [Nn])
                             echo "Skipping Flatpak installation."
                             exit 0
+                            ;;
+                        *)
                             ;;
                     esac
                     ;;

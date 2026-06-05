@@ -1,7 +1,7 @@
 # kdeep 🪐
 [DeepSeek](https://deepseek.com/) assistent🧙 plugin for
 [Kate](https://github.com/KDE/kate) editor.
-Now it is simple plugin becouse global service
+Now it is simple plugin because global service
 has't free API and author nas't full test it.
 Any case you already must be have charged account
 with not zero balance.
@@ -23,6 +23,8 @@ https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyl
 ## ... 🧙‍♂️ no comments, you must be try it now 🦸🏻‍♀️ ...
 [OpenCode](https://opencode.ai/)
 [OpenCode github](https://github.com/anomalyco/opencode)
+now it only partially integration.
+please write to discussion for your new ideas
 
 ## ... 🤯 wow, it can work 👀 ...
 ### build and install - all-in-one

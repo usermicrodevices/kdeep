@@ -1,7 +1,8 @@
 #pragma once
 
-#include <csignal>
+#include <algorithm>
 #include <atomic>
+#include <csignal>
 #include <vector>
 
 #include <memory>
@@ -13,10 +14,17 @@
 #include <QThread>
 #include <QMutex>
 #include <QTextBrowser>
+#include <QTextEdit>
 #include <QPushButton>
+#include <QListWidget>
+#include <QLabel>
 #include <QIcon>
 #include <QLayout>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QMessageBox>
 #include <QDebug>
 #include <QLoggingCategory>
 #include <KPluginFactory>
@@ -26,7 +34,7 @@
 #include <KTextEditor/Plugin>
 #include <KTextEditor/View>
 
-// includes from thirdparty/picolm/picolm
+// includes from thirdparty/picolm
 extern "C" {
 #include "model.h"
 #include "tensor.h"
@@ -57,7 +65,6 @@ public:
     KTextEditor::ConfigPage* configPage(int number, QWidget* parent) override;
 };
 
-// Worker class that runs PicoLLM inference in a background thread
 class PicoLLMWorker : public QObject
 {
     Q_OBJECT
@@ -101,6 +108,15 @@ public slots:
 
 private slots:
     void runPicolm(const QString &modelPath, const KConfigGroup &group);
+    void onNewSessionClicked();
+    void onOpenProjectClicked();
+    void onRefreshSessionsClicked();
+    void onSessionSelected(QListWidgetItem *item);
+    void onSessionContextMenu(const QPoint &pos);
+    void onSessionsReady(const QJsonArray &sessions);
+    void onPromptSubmit();
+    void updatePromptWithDocument();
+    void handlePermissionRequest(const QString &permissionId, const QString &toolName, const QString &description);
 
 private:
     KTextEditor::MainWindow *m_mainWindow = nullptr;
@@ -110,7 +126,17 @@ private:
     NetworkManager *m_networkManager = nullptr;
     OpenCodeManager *m_openCodeManager = nullptr;
 
-    // PicoLLM background thread
+    QListWidget *m_sessionsList = nullptr;
+    QPushButton *m_newSessionBtn = nullptr;
+    QPushButton *m_openProjectBtn = nullptr;
+    QPushButton *m_refreshSessionsBtn = nullptr;
+
+    QTextEdit *m_promptEdit = nullptr;
+    QPushButton *m_submitPromptBtn = nullptr;
+
+    QString m_currentSessionId;
+    QString m_currentProjectPath;
+
     QThread *m_picolmThread = nullptr;
     PicoLLMWorker *m_picolmWorker = nullptr;
 };
